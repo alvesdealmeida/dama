@@ -1,0 +1,190 @@
+﻿<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Damas 3D - Fixed</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #status {
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: yellow; font-family: sans-serif; font-weight: bold; z-index: 100;
+            pointer-events: none; text-shadow: 2px 2px 2px #000;
+        }
+        #ui {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 200; color: white;
+        }
+        button { padding: 15px 30px; margin: 10px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="status">INICIE O JOGO</div>
+    <div id="ui">
+        <h2>JOGO DE DAMAS 3D</h2>
+        <button style="background: white; color: black;" onclick="setup(0xffffff)">JOGAR COM BRANCAS</button>
+        <button style="background: #444; color: white;" onclick="setup(0x333333)">JOGAR COM PRETAS</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, raycaster, mouse;
+        let pieces = [], tiles = [];
+        let selectedPiece = null;
+        let turn = 0xffffff;
+        let playerColor = null;
+
+        function setup(color) {
+            playerColor = color;
+            document.getElementById('ui').style.display = 'none';
+            init();
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // Câmera ajustada para garantir visibilidade total
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(3.5, 10, 5); // Vista de cima inclinada
+            camera.lookAt(3.5, 0, 3.5);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+            
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Gerar Tabuleiro e Peças
+            const tileGeo = new THREE.BoxGeometry(0.9, 0.1, 0.9);
+            const pieceGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.15, 32);
+
+            for (let x = 0; x < 8; x++) {
+                for (let z = 0; z < 8; z++) {
+                    const isDark = (x + z) % 2 !== 0;
+                    const tile = new THREE.Mesh(tileGeo, new THREE.MeshPhongMaterial({ color: isDark ? 0x442200 : 0xddccaa }));
+                    tile.position.set(x, 0, z);
+                    tile.userData = { type: 'tile', x, z, isDark };
+                    scene.add(tile);
+                    tiles.push(tile);
+
+                    if (isDark && z < 3) spawnPiece(x, z, 0x333333, pieceGeo);
+                    if (isDark && z > 4) spawnPiece(x, z, 0xffffff, pieceGeo);
+                }
+            }
+
+            window.addEventListener('pointerdown', onInput);
+            animate();
+            updateStatus();
+        }
+
+        function spawnPiece(x, z, color, geo) {
+            const piece = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: color }));
+            piece.position.set(x, 0.15, z);
+            piece.userData = { type: 'piece', color, x, z };
+            scene.add(piece);
+            pieces.push(piece);
+        }
+
+        function onInput(event) {
+            if (turn !== playerColor) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            if (intersects.length > 0) {
+                const clicked = intersects[0].object;
+
+                // Selecionar Peça
+                if (clicked.userData.type === 'piece' && clicked.userData.color === playerColor) {
+                    if (selectedPiece) selectedPiece.material.emissive.set(0x000000);
+                    selectedPiece = clicked;
+                    selectedPiece.material.emissive.set(0x444400);
+                } 
+                // Mover para Tile
+                else if (clicked.userData.type === 'tile' && selectedPiece && clicked.userData.isDark) {
+                    move(selectedPiece, clicked.userData.x, clicked.userData.z);
+                }
+            }
+        }
+
+        function move(piece, nx, nz) {
+            const dx = Math.abs(nx - piece.userData.x);
+            const dz = Math.abs(nz - piece.userData.z);
+
+            // Regra básica de movimento diagonal
+            if (dx === 1 && dz === 1) {
+                const occupied = pieces.find(p => p.userData.x === nx && p.userData.z === nz);
+                if (!occupied) performMove(piece, nx, nz);
+            } 
+            // Regra de captura
+            else if (dx === 2 && dz === 2) {
+                const mx = (piece.userData.x + nx) / 2;
+                const mz = (piece.userData.z + nz) / 2;
+                const enemy = pieces.find(p => p.userData.x === mx && p.userData.z === mz && p.userData.color !== playerColor);
+                if (enemy) {
+                    scene.remove(enemy);
+                    pieces = pieces.filter(p => p !== enemy);
+                    performMove(piece, nx, nz);
+                }
+            }
+        }
+
+        function performMove(piece, nx, nz) {
+            piece.position.set(nx, 0.15, nz);
+            piece.userData.x = nx;
+            piece.userData.z = nz;
+            piece.material.emissive.set(0x000000);
+            selectedPiece = null;
+            turn = (turn === 0xffffff) ? 0x333333 : 0xffffff;
+            updateStatus();
+            if (turn !== playerColor) setTimeout(iaAction, 800);
+        }
+
+        function iaAction() {
+            const myPieces = pieces.filter(p => p.userData.color === turn);
+            if (myPieces.length > 0) {
+                // IA tenta movimento aleatório válido
+                for (let p of myPieces) {
+                    const nx = p.userData.x + (Math.random() > 0.5 ? 1 : -1);
+                    const nz = p.userData.z + (turn === 0xffffff ? -1 : 1);
+                    if (nx >= 0 && nx < 8 && nz >= 0 && nz < 8) {
+                        const occupied = pieces.find(pc => pc.userData.x === nx && pc.userData.z === nz);
+                        if (!occupied) {
+                            performMove(p, nx, nz);
+                            return;
+                        }
+                    }
+                }
+            }
+            turn = playerColor; // Fallback se IA travar
+            updateStatus();
+        }
+
+        function updateStatus() {
+            const status = document.getElementById('status');
+            status.innerText = (turn === playerColor) ? "SUA VEZ" : "IA PENSANDO...";
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
